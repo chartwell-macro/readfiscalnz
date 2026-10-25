@@ -1,0 +1,5 @@
+table,statement_sheet,period_end,fiscal_year,period_kind,observation,actual_forecast,consolidation_scope,accounting_basis,section,series,note,value,unit
+performance,Fin Stmts - Perform,2025-06-30,2025/26,annual,prior_year_actual,actual,whole-of-government consolidated,accrual PBE Standards,Revenue,Taxation revenue,2,100,NZD million
+performance,Fin Stmts - Perform,2026-02-28,2025/26,year_to_date,current_year_to_date_actual,actual,whole-of-government consolidated,accrual PBE Standards,Revenue,Taxation revenue,2,110,NZD million
+performance,Fin Stmts - Perform,2026-02-28,2025/26,year_to_date,current_year_to_date_forecast,forecast,whole-of-government consolidated,accrual PBE Standards,Revenue,Taxation revenue,2,108,NZD million
+performance,Fin Stmts - Perform,2026-06-30,2025/26,annual,annual_forecast,forecast,whole-of-government consolidated,accrual PBE Standards,Revenue,Taxation revenue,2,170,NZD million

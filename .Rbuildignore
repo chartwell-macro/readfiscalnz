@@ -1,0 +1,13 @@
+^\.git$
+^\.gitignore$
+^\.gitattributes$
+^\.Rcheck$
+^readfiscalnz[.]Rcheck$
+^readfiscalnz_.*[.]tar[.]gz$
+^README[.]Rmd$
+^_pkgdown[.]yml$
+^[.]github$
+^docs$
+^cran-comments[.]md$
+^CITATION[.]cff$
+^CONTRIBUTING[.]md$

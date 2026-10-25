@@ -1,0 +1,267 @@
+---
+title: "Sources, provenance, and caching"
+author: "Chartwell Macro"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    mathjax: null
+    md_extensions: "-tex_math_dollars"
+vignette: >
+  %\VignetteIndexEntry{Sources, provenance, and caching}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+Reproducibility in `readfiscalnz` has two parts: selecting the exact
+publication and retaining the exact bytes parsed. This article explains the
+static release catalogue, source terms, provenance fields, raw snapshots, and
+the in-memory parsed-result cache. It uses a packaged synthetic CSV fixture;
+no network request is made while the article is built.
+
+```{r setup, message=FALSE}
+library(readfiscalnz)
+
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+
+hfi_file <- system.file("extdata", "hfi.csv", package = "readfiscalnz")
+if (!nzchar(hfi_file)) {
+  stop("The installed hfi.csv fixture is unavailable.")
+}
+
+cache <- tempfile("readfiscalnz-provenance-")
+dir.create(cache, recursive = TRUE, showWarnings = FALSE)
+```
+
+## Start with the release catalogue
+
+`list_nz_fiscal_releases()` is an offline catalogue, not a discovery scraper.
+It records six supported release identities, their family, publication status,
+official landing and artifact URLs, expected SHA-256, and revision note.
+
+Those rows do not all represent the same kind of coverage. The HFI and tax
+rows each identify one published snapshot of a rolling, revised history; the
+monthly financials row identifies one eight-month reporting snapshot; and the
+three EFU rows identify three separate vintages containing actual or unaudited
+and forecast rows. The catalogue is therefore neither a complete Treasury
+dataset index nor a complete archive of every publication vintage.
+
+```{r catalogue}
+catalogue <- list_nz_fiscal_releases()
+stopifnot(nrow(catalogue) == 6L)
+
+catalogue[c(
+  "release_id", "family", "release_type", "status", "issue_date",
+  "expected_sha256", "revision_note"
+)]
+```
+
+Selecting `release_id` is preferable when an analysis must be replayed later.
+With no explicit identifier, the `as_published` revision policy (the default)
+selects the newest current catalogue row and falls back to the newest issue
+date when that family has no current row; `latest` always selects the newest
+issue date. The selected policy and release are recorded in provenance.
+
+## Review the source terms
+
+Terms are also static package metadata. `nz_fiscal_terms()` does not fetch a
+page, grant permission, or write to a cache. It gives the links and attribution
+needed for a human review before enabling a live read.
+
+```{r terms}
+terms <- nz_fiscal_terms("hfi-1972-2025")
+stopifnot(
+  nrow(terms) == 1L,
+  identical(terms$terms_license, "CC BY 4.0"),
+  identical(terms$terms_attribution, "The Treasury")
+)
+
+terms[c(
+  "release_id", "terms_statement", "terms_license", "terms_attribution",
+  "license_url", "terms_url", "terms_verified_at"
+)]
+```
+
+The package records the Treasury statement and links but does not provide legal
+advice. Third-party material on an official page may have separate rights;
+the package routes only the catalogued Treasury data artifacts. The installed
+terms record at `system.file("TERMS.md", package = "readfiscalnz")` documents
+the boundary and complete links.
+
+## Local replay versus official retrieval
+
+Supplying `file` is the reproducible offline route. The file is checked for a
+supported extension and signature, copied to a content-addressed raw snapshot,
+and parsed through the normal validation path. The input file is not modified
+and no network request is made. A local replay records `source_kind =
+"local_file"` and preserves both the actual input hash and the selected
+release's catalogue hash.
+
+```{r local-provenance}
+hfi <- read_nz_hfi(
+  release_id = "hfi-1972-2025",
+  file = hfi_file,
+  sheets = "Spending",
+  cache_dir = cache
+)
+provenance <- nz_fiscal_provenance(hfi)
+
+stopifnot(
+  identical(provenance$source_kind, "local_file"),
+  identical(provenance$revision_policy, "as_published"),
+  nchar(provenance$raw_sha256) == 64L,
+  nchar(provenance$catalogue_sha256) == 64L,
+  file.exists(provenance$raw_snapshot_path)
+)
+
+data.frame(
+  field = c("source_kind", "release_id", "raw_size_bytes", "raw_sha256",
+            "catalogue_sha256", "parser_version", "schema_version"),
+  value = c(
+    provenance$source_kind,
+    provenance$release_id,
+    as.character(provenance$raw_size_bytes),
+    substr(provenance$raw_sha256, 1L, 16L),
+    substr(provenance$catalogue_sha256, 1L, 16L),
+    provenance$parser_version,
+    provenance$schema_version
+  ),
+  row.names = NULL
+)
+```
+
+The installed CSV is a synthetic example, so its `raw_sha256` is intentionally
+different from the official workbook hash in `catalogue_sha256`. This is an
+explicit fixture trust boundary, not a claim that the fixture is an official
+release. An official download is accepted only after transport, size,
+signature, HTTPS-host, and catalogue SHA-256 checks succeed.
+
+With `file = NULL`, the live route first resolves the catalogued official URL
+but may reuse an existing exact hash-addressed raw-cache entry rather than
+transfer the bytes again. The live equivalent is conditional so routine builds
+remain offline:
+
+```{r live-source}
+if (identical(Sys.getenv("READFISCALNZ_LIVE"), "true")) {
+  official <- read_nz_hfi(
+    release_id = "hfi-1972-2025",
+    accept_terms = TRUE,
+    cache_dir = tempfile("readfiscalnz-official-cache-"),
+    timeout_sec = 30
+  )
+  nz_fiscal_provenance(official)[
+    c("source_kind", "resolved_url", "raw_sha256", "catalogue_sha256")
+  ]
+}
+```
+
+## Verify and replay the exact bytes
+
+`nz_fiscal_raw_bytes()` reads the archived bytes only after confirming that the
+snapshot still exists, remains within `max_bytes`, and has the recorded
+SHA-256. It never downloads a replacement.
+
+```{r raw-bytes}
+raw <- nz_fiscal_raw_bytes(hfi)
+raw_hash <- digest::digest(raw, algo = "sha256", serialize = FALSE)
+
+stopifnot(
+  is.raw(raw),
+  identical(raw_hash, provenance$raw_sha256),
+  length(raw) == provenance$raw_size_bytes
+)
+
+c(raw_bytes = length(raw), sha256_matches = identical(raw_hash, provenance$raw_sha256))
+```
+
+The `raw_snapshot_path` is useful to a local auditor, while `raw_sha256` is
+the portable identity to record in an analysis manifest. Do not rely on a
+temporary path surviving another machine or R session.
+
+## Understand the two cache layers
+
+There are two separate caches:
+
+* The raw cache contains immutable, hash-addressed `.xlsx` or `.csv` snapshots
+  below `cache_dir/raw`. It is persistent and bounded by file-count, total-byte,
+  and age settings.
+* The parsed cache is an in-memory LRU cache for the current R process. Its key
+  includes the raw hash, release, revision policy, parser version, schema
+  version, and parser options. It does not replace the raw snapshot.
+
+The default raw cache is
+`tools::R_user_dir("readfiscalnz", "cache")/v1`. A project, test, or vignette
+can supply `cache_dir` directly; the `readfiscalnz.cache_dir` option changes
+the default for a session. The other policy options are
+`readfiscalnz.parsed_cache_entries`, `readfiscalnz.raw_cache_files`,
+`readfiscalnz.raw_cache_bytes`, `readfiscalnz.raw_cache_max_age_days`, and
+`readfiscalnz.download_attempts` (the last controls live retries, up to three).
+
+The following local option block demonstrates an isolated policy and restores
+the caller's options when it exits. It does not change the package defaults.
+
+```{r cache-options}
+local({
+  old <- options(
+    readfiscalnz.cache_dir = cache,
+    readfiscalnz.parsed_cache_entries = 4L,
+    readfiscalnz.raw_cache_files = 8L,
+    readfiscalnz.raw_cache_bytes = 5 * 1024^2,
+    readfiscalnz.raw_cache_max_age_days = 30,
+    readfiscalnz.download_attempts = 2L
+  )
+  on.exit(options(old), add = TRUE)
+
+  replay <- read_nz_hfi(
+    release_id = "hfi-1972-2025",
+    file = hfi_file,
+    sheets = "Spending"
+  )
+  stopifnot(identical(nrow(replay), nrow(hfi)))
+  c(
+    parsed_entries = getOption("readfiscalnz.parsed_cache_entries"),
+    raw_files = getOption("readfiscalnz.raw_cache_files"),
+    raw_bytes = getOption("readfiscalnz.raw_cache_bytes"),
+    raw_max_age_days = getOption("readfiscalnz.raw_cache_max_age_days"),
+    download_attempts = getOption("readfiscalnz.download_attempts")
+  )
+})
+```
+
+Use `prune_nz_fiscal_cache()` for explicit local maintenance. It only removes
+managed raw snapshots and never makes a network request; pass `preserve` when
+an in-use snapshot must survive the pruning pass.
+
+```{r prune}
+pruned <- prune_nz_fiscal_cache(
+  cache_dir = cache,
+  max_files = 1L,
+  max_bytes = 5 * 1024^2,
+  max_age_days = Inf,
+  preserve = provenance$raw_snapshot_path
+)
+stopifnot(identical(names(pruned), c("files", "bytes")))
+pruned
+```
+
+## What provenance does and does not guarantee
+
+Provenance records the release identity, source route, source location,
+snapshot path and size, actual raw hash, catalogue hash, terms metadata,
+revision policy, parser version, schema version, and parser options. It does
+not infer that two releases are comparable merely because their display names
+match. Use `nz_fiscal_series_catalogue()` to make structural identity explicit,
+and retain the provenance list with any derived output.
+
+The package currently fails closed on an unsupported release, missing or
+changed workbook structure, invalid signature, size limit, or official hash
+drift. It does not silently download during package load, tests, or local
+replay. `accept_terms = TRUE` is required only for the live route and is not a
+credential. The troubleshooting vignette maps these failures to recovery
+actions.
+
+```{r cleanup, include=FALSE}
+unlink(cache, recursive = TRUE)
+```

@@ -1,0 +1,4 @@
+# Stage-three evidence tests verify exact committed bytes. Disable checkout
+# line-ending conversion for the CSV evidence on every platform.
+inst/stage3_review/*.csv -text
+inst/stage3_review/artifacts/*.csv -text

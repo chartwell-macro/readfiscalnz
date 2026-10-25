@@ -1,0 +1,40 @@
+Package: readfiscalnz
+Title: Reproducible Access to New Zealand Treasury Fiscal Data
+Version: 0.1.0
+Authors@R:
+    person(given = "Chartwell", family = "Macro",
+           email = "chartwellmacro@gmail.com",
+           role = c("aut", "cre", "cph"))
+Description: Retrieves, validates, normalises, and replays byte-pinned releases
+    of official New Zealand Treasury fiscal data. Readers cover Historical
+    Fiscal Indicators, tax outturns, monthly financial statements, and
+    Economic and Fiscal Updates. Returned long-form data retain accounting
+    regimes, consolidation scope, forecast vintages, source status, exact
+    input hashes, and parser and schema provenance. Local files enable
+    deterministic offline workflows.
+License: MIT + file LICENSE
+URL: https://chartwell-macro.github.io/readfiscalnz/,
+    https://github.com/chartwell-macro/readfiscalnz
+BugReports: mailto:chartwellmacro@gmail.com
+Encoding: UTF-8
+Language: en-GB
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Depends:
+    R (>= 4.1.0)
+Imports:
+    curl,
+    digest,
+    readxl,
+    xml2
+Suggests:
+    ggplot2,
+    knitr,
+    ps,
+    rmarkdown,
+    testthat (>= 3.0.0),
+    writexl
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+Config/Needs/website: pkgdown
+Config/Needs/coverage: covr

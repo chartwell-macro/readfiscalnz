@@ -1,0 +1,8 @@
+bibentry(
+  bibtype = "Manual",
+  title = "readfiscalnz: Reproducible Access to New Zealand Treasury Fiscal Data",
+  author = person(given = "Chartwell Macro"),
+  year = "2026",
+  note = "R package version 0.1.0",
+  url = "https://github.com/chartwell-macro/readfiscalnz"
+)

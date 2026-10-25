@@ -1,0 +1,93 @@
+url: https://chartwell-macro.github.io/readfiscalnz/
+title: "readfiscalnz: Reproducible Access to New Zealand Treasury Fiscal Data"
+destination: docs
+
+development:
+  mode: auto
+
+template:
+  bootstrap: 5
+
+authors:
+  "Chartwell Macro":
+    href: https://github.com/chartwell-macro
+
+navbar:
+  structure:
+    left: [getting_started, reference, articles, news]
+    right: [search, github, lightswitch]
+  components:
+    getting_started:
+      text: Get started
+      href: articles/getting-started.html
+
+repo:
+  url:
+    home: https://github.com/chartwell-macro/readfiscalnz/
+    source: https://github.com/chartwell-macro/readfiscalnz/blob/HEAD/
+    issue: mailto:chartwellmacro@gmail.com
+    user: https://github.com/
+
+reference:
+  - title: "Package overview"
+    desc: >
+      Start with the package scope, supported release families, output model,
+      and offline or live workflow boundaries.
+    contents:
+      - readfiscalnz-package
+
+  - title: "Discover releases and terms"
+    desc: >
+      Inspect the supported Treasury release catalogue, publication status,
+      source metadata, and per-release licence terms before reading data.
+    contents:
+      - list_nz_fiscal_releases
+      - nz_fiscal_terms
+
+  - title: "Read Treasury release families"
+    desc: >
+      Read the supported Historical Fiscal Indicators, tax outturn, monthly
+      financial statement, and Economic and Fiscal Update workbook families.
+    contents:
+      - read_nz_hfi
+      - read_nz_tax_outturn
+      - read_nz_monthly_financials
+      - read_nz_efu
+
+  - title: "Build canonical fiscal series"
+    desc: >
+      Identify stable series across structural accounting, consolidation,
+      unit, regime, and actual or forecast dimensions, then replay one series.
+    contents:
+      - nz_fiscal_series_catalogue
+      - nz_fiscal_series_history
+
+  - title: "Provenance and byte replay"
+    desc: >
+      Inspect the release, parser, schema, terms, cache, and SHA-256 metadata
+      attached to parsed data and recover the exact preserved source bytes.
+    contents:
+      - nz_fiscal_provenance
+      - nz_fiscal_raw_bytes
+      - print.nz_fiscal_data
+
+  - title: "Cache management"
+    desc: >
+      Apply explicit file-count, size, and age bounds to the raw snapshot
+      cache.
+    contents:
+      - prune_nz_fiscal_cache
+
+articles:
+  - title: "Start here"
+    navbar: "Get started"
+    contents:
+      - 'matches("^getting-started$")'
+  - title: "Sources, provenance, and caching"
+    navbar: "Data and provenance"
+    contents:
+      - 'matches("^sources-provenance-caching$")'
+  - title: "Troubleshooting and limitations"
+    navbar: "Troubleshooting"
+    contents:
+      - "troubleshooting"

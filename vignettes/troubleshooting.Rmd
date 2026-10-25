@@ -1,0 +1,235 @@
+---
+title: "Troubleshooting and validation"
+author: "Chartwell Macro"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    mathjax: null
+    md_extensions: "-tex_math_dollars"
+vignette: >
+  %\VignetteIndexEntry{Troubleshooting and validation}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+`readfiscalnz` is intentionally strict at each boundary: release selection,
+transport, artifact validation, parsing, semantic validation, caching, and
+series replay. An error is preferable to silently changing an accounting
+regime or accepting an unverified workbook. This article shows how to locate
+the failing stage, recover safely, and collect maintainer-useful diagnostics
+without exposing credentials.
+
+The examples below use a packaged synthetic CSV and a temporary cache. They
+are deterministic and offline.
+
+```{r setup, message=FALSE}
+library(readfiscalnz)
+
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+
+fixture <- system.file("extdata", "hfi.csv", package = "readfiscalnz")
+if (!nzchar(fixture)) {
+  stop("The installed hfi.csv fixture is unavailable.")
+}
+
+cache <- tempfile("readfiscalnz-troubleshooting-")
+dir.create(cache, recursive = TRUE, showWarnings = FALSE)
+
+error_text <- function(expr) {
+  tryCatch(
+    force(expr),
+    error = function(condition) conditionMessage(condition)
+  )
+}
+```
+
+## Locate the failing stage
+
+| Stage | Typical symptoms | First checks |
+|---|---|---|
+| Release selection | unknown family or `release_id` | `list_nz_fiscal_releases()` and exact identifier |
+| Terms and transport | `accept_terms` refusal, timeout, HTTP or redirect error | review `nz_fiscal_terms()`, use a local file, check bounded timeout |
+| Artifact validation | unsupported extension, empty/oversized file, missing XLSX/CSV signature | confirm the path, extension, file size, and source bytes |
+| Official integrity | catalogue SHA-256 mismatch | retain the artifact and report release ID plus hashes; do not bypass the check |
+| Parse and schema | missing sheet, canonical column mismatch, changed labels | use the correct family reader and inspect the release structure |
+| Semantic validation | accounting, date, unit, consolidation, or forecast-status drift | treat as upstream/schema change; do not coerce values silently |
+| Cache/provenance | missing or corrupt raw snapshot | rerun the reader from the original local file or official release |
+| Series replay | invalid or absent 64-hex identity, duplicate dates | obtain `series_id` directly from `nz_fiscal_series_catalogue()` |
+
+## Capture a safe error message
+
+For a reproducible report, capture the condition message while keeping the
+original input and cache private. The helper below returns only that message.
+
+```{r safe-errors}
+missing <- file.path(tempdir(), "readfiscalnz-no-such-file.csv")
+missing_message <- error_text(
+  read_nz_hfi(file = missing, cache_dir = cache)
+)
+missing_message
+```
+
+The local-file error means the reader did not start parsing. Check
+`file.exists(path)`, `tools::file_ext(path)`, and the path's read permission;
+do not work around it by downloading an arbitrary similarly named file.
+
+If no local file is supplied, terms refusal occurs before network transport.
+This is the expected offline failure, not evidence that a cached parser result
+was lost.
+
+```{r terms-error}
+terms_message <- error_text(
+  read_nz_hfi(
+    release_id = "hfi-1972-2025",
+    cache_dir = cache,
+    accept_terms = FALSE
+  )
+)
+terms_message
+```
+
+To use the live path, inspect `nz_fiscal_terms("hfi-1972-2025")`, then set
+`accept_terms = TRUE` explicitly. If the goal is an offline build or test,
+pass a saved local artifact instead. A local artifact avoids live network
+access and the live terms gate, but the package still attaches its pinned
+catalogue terms metadata and the source terms remain applicable.
+
+## Recover from schema and semantic failures
+
+Readers accept only `.xlsx` workbooks or canonical `.csv` files with the exact
+family schema. A file with the wrong columns should fail before producing a
+partially interpreted result.
+
+```{r schema-error}
+bad_csv <- tempfile("readfiscalnz-bad-", fileext = ".csv")
+writeLines(c("wrong,columns", "1,2"), bad_csv)
+bad_message <- error_text(
+  read_nz_tax_outturn(file = bad_csv, cache_dir = cache)
+)
+unlink(bad_csv)
+bad_message
+```
+
+Do not fix a schema error by renaming or reordering columns until the source
+layout has been reviewed. The supported release, parser version, and schema
+version are part of the package contract. An upstream Treasury layout change
+requires a catalogue/parser update and new tests.
+
+For a genuine local replay, start with a fresh cache and the original saved
+artifact:
+
+```{r valid-replay}
+valid <- read_nz_hfi(
+  release_id = "hfi-1972-2025",
+  file = fixture,
+  sheets = "Spending",
+  cache_dir = cache
+)
+stopifnot(inherits(valid, "nz_fiscal_data"))
+```
+
+If this succeeds but an official read fails, compare the release ID and
+expected catalogue hash, then retain the non-secret HTTP status or error text
+separately. When provenance is available, inspect `resolved_url`,
+`retrieved_at`, and `raw_sha256`. Do not replace a failed official hash check
+with a fixture unless the fixture route is explicitly the analysis being
+tested.
+
+## Repair a missing or corrupt cache entry
+
+The raw snapshot is content-addressed and verified by
+`nz_fiscal_raw_bytes()`. Removing a temporary snapshot makes the failure mode
+explicit; rerunning the reader from the original local file rebuilds it.
+
+```{r cache-repair}
+snapshot <- nz_fiscal_provenance(valid)$raw_snapshot_path
+stopifnot(file.exists(snapshot))
+unlink(snapshot)
+
+missing_snapshot_message <- error_text(nz_fiscal_raw_bytes(valid))
+sub(
+  snapshot,
+  "<raw-snapshot>",
+  missing_snapshot_message,
+  fixed = TRUE
+)
+
+repaired <- read_nz_hfi(
+  release_id = "hfi-1972-2025",
+  file = fixture,
+  sheets = "Spending",
+  cache_dir = cache
+)
+stopifnot(
+  identical(nrow(repaired), nrow(valid)),
+  file.exists(nz_fiscal_provenance(repaired)$raw_snapshot_path)
+)
+```
+
+`nz_fiscal_raw_bytes()` never downloads a replacement. If the original local
+file is unavailable, recover it from the analysis archive or rerun the
+catalogued official route after reviewing terms. `prune_nz_fiscal_cache()` can
+remove old raw snapshots, so preserve an in-use path during maintenance.
+
+## Diagnose series-history errors
+
+Series identities are lowercase 64-character SHA-256 strings returned by
+`nz_fiscal_series_catalogue()`. They are not display names and should not be
+typed by hand.
+
+```{r series-error}
+invalid_id_message <- error_text(
+  nz_fiscal_series_history(valid, "Core Crown expenses")
+)
+invalid_id_message
+
+series_catalogue <- nz_fiscal_series_catalogue(valid)
+stopifnot(nrow(series_catalogue) > 0L)
+history <- nz_fiscal_series_history(
+  valid,
+  series_catalogue$series_id[[1L]]
+)
+stopifnot(inherits(history, "nz_fiscal_data"))
+```
+
+If a valid identity is absent, confirm that the same release, surface, and
+parser options were used to build the catalogue. A changed accounting basis,
+unit, or actual/forecast role intentionally creates a different identity.
+
+## Maintainer validation without secrets
+
+When emailing chartwellmacro@gmail.com, include the package version, R version, operating
+system, release ID, reader arguments (with local paths shortened), and the
+selected provenance fields. Include `raw_sha256` and `catalogue_sha256`, but
+do not include private file paths, credentials, cookies, or full environment
+dumps.
+
+```{r maintainer-diagnostics}
+safe_provenance <- nz_fiscal_provenance(valid)
+safe_provenance[c(
+  "provider", "family", "release_id", "source_kind", "raw_size_bytes",
+  "raw_sha256", "catalogue_sha256", "parser_version", "schema_version"
+)]
+```
+
+For a local checkout, the maintainer validation sequence is:
+
+1. Run the offline package tests with `testthat::test_local()` and confirm
+   that the packaged fixtures reproduce their expected schemas and values.
+2. Build a source tarball and run `R CMD check --as-cran` in a clean library.
+3. For an official-source issue only, run the package's explicit live
+   validation with the required environment and terms decision; retain the
+   available `resolved_url`, `retrieved_at`, and artifact hash, and capture any
+   non-secret HTTP status or error details separately. Never retain credentials.
+
+The live path is deliberately opt-in. A normal check, vignette build, or
+package load must not depend on Treasury availability. If a failure repeats
+with the same release and clean local fixture, report the safe diagnostics and
+the smallest reproducible input so the parser can be updated deliberately.
+
+```{r cleanup, include=FALSE}
+unlink(cache, recursive = TRUE)
+```

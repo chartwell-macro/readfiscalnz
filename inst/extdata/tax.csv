@@ -1,0 +1,5 @@
+date,fiscal_year,measure,accounting_basis,consolidation_scope,section,series,value,unit,writeoff_regime
+2007-05-01,2006/07,revenue,accrual,unconsolidated,Section I: Actual revenue ($million),Total tax,10,NZD million,net_of_tax_writeoffs
+2007-06-01,2006/07,revenue,accrual,unconsolidated,Section I: Actual revenue ($million),Total tax,11,NZD million,gross_of_tax_writeoffs
+2007-07-01,2007/08,revenue,accrual,unconsolidated,Section I: Actual revenue ($million),Total tax,12,NZD million,gross_of_tax_writeoffs
+2007-05-01,2006/07,receipts,cash,unconsolidated,Section I: Actual receipts ($million),Total tax,9,NZD million,not_applicable_to_cash_receipts

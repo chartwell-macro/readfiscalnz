@@ -1,0 +1,399 @@
+---
+title: "Getting started with readfiscalnz"
+author: "Chartwell Macro"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+    mathjax: null
+    md_extensions: "-tex_math_dollars"
+vignette: >
+  %\VignetteIndexEntry{Getting started with readfiscalnz}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+`readfiscalnz` turns six exact New Zealand Treasury Excel publications into
+long-form R data. Those six publications are a mixture of historical
+collections and point-in-time releases: one HFI history, one tax-outturn
+history, one monthly accounts snapshot, and three separate EFU forecast
+vintages. This article makes that boundary explicit before taking a new user
+from release discovery through an offline read and chart, provenance, and
+canonical series selection.
+
+The chart workflow uses a small, attribution-documented canonical snapshot of
+the official HFI `Core Crown Expenses` series. The remaining reader examples
+use four tiny synthetic canonical CSV fixtures. All are installed with the
+package so the article runs offline; the source, hashes, CC BY 4.0 attribution,
+and change notice for the official snapshot are recorded in
+`inst/extdata/README.md`. A live refresh can be read by omitting `file` after
+reviewing the terms and setting `accept_terms = TRUE`; that path is shown
+separately at the end.
+
+```{r setup, include=FALSE}
+library(readfiscalnz)
+
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+
+fixture_path <- function(name) {
+  system.file("extdata", name, package = "readfiscalnz", mustWork = TRUE)
+}
+
+cache <- tempfile("readfiscalnz-getting-started-")
+dir.create(cache, recursive = TRUE, showWarnings = FALSE)
+```
+
+## Understand the coverage
+
+The package supports six **publication artifacts**. A release identifier names
+one original Treasury workbook; it does not name one year or one observation.
+HFI and tax are each one published snapshot of a rolling, revised history;
+their earlier workbook vintages are not retained. Monthly financials is one
+reporting-date snapshot, and EFU is the only family with multiple supported
+publication vintages.
+
+* **One rolling annual history:** `hfi-1972-2025` maps to
+  `fiscaltimeseries1972-2025-year-end25.xlsx`. Its five HFI sheets contain
+  annual observations across 1972--2025; individual series can start later.
+  Dates use March years through 1989 and June years from 1990. This is one
+  current published historical workbook, not multiple HFI vintages; retain
+  accounting-regime and comparability fields because changes are not
+  necessarily backdated.
+* **One rolling monthly history:** `tax-outturn-2026-05` maps to
+  `tax-history-may26.xlsx`. Its `AllRevenue` and `AllReceipts` sheets contain
+  monthly accrual revenue and cash receipts history through May 2026; starting
+  dates vary by series. This is one current published snapshot, not every
+  monthly release, and the package neither adjusts the values nor merges older
+  revisions into it.
+* **One monthly reporting snapshot:** `monthly-financials-2026-02` maps to
+  `fsgnz-8mths-feb25.xlsx`. That exact Treasury filename belongs to the release
+  titled "eight months ended 28 February 2026". Its six statement surfaces
+  retain annual, year-to-date, actual, forecast, and variance roles. This is
+  one superseded reporting release, not a merged panel of publication dates.
+* **Three forecast vintages:** `befu-2026`, `hyefu-2025`, and `prefu-2023` map
+  to `befu26-charts-data.xlsx`, `hyefu25-charts-data.xlsx`, and
+  `prefu23-charts-data.xlsx`. They contain fiscal, economic, and key-indicator
+  sheets with both actual or unaudited and forecast rows. `actual_forecast` and
+  `forecast_horizon` retain those labels; the package does not interpolate or
+  revise values between vintages. BEFU is current; HYEFU and PREFU are
+  superseded but retained for comparison and replay.
+
+HFI and tax therefore provide long time dimensions from one workbook each.
+The monthly reader exposes one accounts publication. EFU is the only family
+with multiple catalogued publication vintages in this package version.
+
+The package does not install the six full workbooks. With `file = NULL`, a live
+read resolves the catalogued Treasury URL and may reuse an exact hash-addressed
+raw-cache entry; otherwise it downloads the original `.xlsx` and verifies its
+pinned SHA-256. A local read parses a caller-supplied `.xlsx` or canonical
+`.csv` without network access. The installed official-data example contains
+only 32 HFI Core Crown Expenses observations for 1994--2025; the other small
+installed CSVs are synthetic schema examples rather than Treasury product
+data.
+
+## Choose a release and surface
+
+The static catalogue is the starting point for discovery. It performs no
+network request and returns the release identifier, family, status, dates,
+official artifact URL, expected SHA-256, and terms metadata.
+
+```{r catalogue}
+library(readfiscalnz)
+
+releases <- list_nz_fiscal_releases()
+stopifnot(
+  is.data.frame(releases),
+  nrow(releases) == 6L,
+  all(nchar(releases$expected_sha256) == 64L)
+)
+
+releases[c(
+  "release_id", "family", "status", "file_name"
+)]
+```
+
+Choose a reader based on the question rather than on the release count:
+
+* `read_nz_hfi()` selects long-run annual fiscal aggregates by named workbook
+  sheet and returns `period_end`, accounting regimes, and restatement context.
+* `read_nz_tax_outturn()` selects monthly revenue, receipts, or both and
+  returns `date`, consolidation scope, and the tax-write-off regime.
+* `read_nz_monthly_financials()` selects one or more of six statement tables
+  from the February 2026 release and retains annual/YTD and actual/forecast
+  roles.
+* `read_nz_efu()` selects fiscal, economic, or key-indicator sheets from a
+  chosen publication and retains its vintage, forecast horizon, source units,
+  and actual/forecast labels.
+
+The catalogue focuses on reviewed release identities and mapped workbook
+surfaces. New publications and changed workbook layouts enter the supported
+set through a catalogue and parser review.
+
+## Retrieve and chart a time series
+
+**Input used below:** the installed file is a derived, 32-row canonical CSV
+subset of official HFI Core Crown Expenses observations for 1994--2025, not the
+original Treasury XLSX. The values are unchanged from the byte-pinned workbook.
+The local snapshot keeps documentation offline while exercising the public
+reader, schema validation, cache, and provenance path; the live route later in
+this article retrieves the original workbook.
+
+```{r chart-data}
+snapshot <- system.file(
+  "extdata", "hfi-core-crown-expenses-official.csv",
+  package = "readfiscalnz",
+  mustWork = TRUE
+)
+
+hfi_release <- releases[
+  releases$release_id == "hfi-1972-2025",
+  c("release_id", "family", "status", "issue_date")
+]
+
+hfi_expenses <- read_nz_hfi(
+  release_id = hfi_release$release_id[[1L]],
+  file = snapshot,
+  revision = "as_published",
+  sheets = "Spending",
+  cache_dir = cache
+)
+
+chart_data <- hfi_expenses[
+  hfi_expenses$series == "Core Crown Expenses" &
+    hfi_expenses$measure == "level",
+  c("period_end", "value")
+]
+chart_data <- chart_data[
+  order(chart_data$period_end),
+  ,
+  drop = FALSE
+]
+row.names(chart_data) <- NULL
+
+utils::head(chart_data, 3L)
+```
+
+The filtered data contain one published level series, so the plot uses the
+returned `period_end` and numeric `value` fields directly. HFI spans reporting
+regime changes; retain `regime_id` and `comparability_note` from the full reader
+output when interpreting changes across those boundaries. `ggplot2` remains a
+suggested package and is checked before plotting.
+
+```{r retrieve-chart-series, fig.width=7, fig.height=4.8, out.width='100%', fig.alt='Line chart of official New Zealand Core Crown expenses from 1994 to 2025.'}
+if (requireNamespace("ggplot2", quietly = TRUE)) {
+  ggplot2::ggplot(
+    chart_data,
+    ggplot2::aes(x = period_end, y = value)
+  ) +
+    ggplot2::geom_line() +
+    ggplot2::labs(
+      title = "Core Crown expenses in the HFI release",
+      subtitle = "Annual published observations",
+      x = "Fiscal year end",
+      y = "Core Crown expenses (NZD million)",
+      caption = "Source: The Treasury, Historical Fiscal Indicators 1972–2025"
+    ) +
+    ggplot2::theme_minimal(base_size = 13)
+}
+```
+
+`nz_fiscal_provenance(hfi_expenses)` returns the exact snapshot and source
+workbook hashes, parser and schema versions, and terms metadata. The complete
+record and change notice are in `inst/extdata/README.md`. The source and
+attribution are
+[The Treasury](https://www.treasury.govt.nz/publications/information-release/data-fiscal-time-series-historical-fiscal-indicators),
+and the snapshot is provided under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). For a live refresh,
+keep the selection and plotting steps unchanged and replace the local `file`
+route with the bounded live route described in
+[From an official release](#from-an-official-release).
+
+## First success: replay HFI data offline
+
+Pass a local canonical CSV to exercise the public reader, canonical-schema
+validation, provenance, and cache path without network access. The CSV is
+already normalised. The cache is placed under a temporary directory so the
+example does not write to a user's managed cache.
+
+```{r first-hfi}
+hfi <- read_nz_hfi(
+  release_id = "hfi-1972-2025",
+  file = fixture_path("hfi.csv"),
+  sheets = "Spending",
+  cache_dir = cache
+)
+
+stopifnot(
+  inherits(hfi, c("nz_fiscal_data", "data.frame")),
+  inherits(hfi$period_end, "Date"),
+  is.numeric(hfi$value),
+  identical(names(hfi), c(
+    "year", "period_end", "section", "category", "series", "measure",
+    "value", "unit", "regime_id", "fiscal_year_basis", "accounting_basis",
+    "gst_treatment", "consolidation_scope", "comparability_note",
+    "restatement_status"
+  ))
+)
+
+hfi[c("year", "period_end", "series", "measure", "value", "regime_id")]
+```
+
+Every reader returns class `c("nz_fiscal_data", "data.frame")`. The
+family-specific columns stay in a stable order; date columns are `Date`,
+`value` is numeric, and the semantic columns are character. The reader keeps
+source order and preserves accounting regimes, missing values, and
+actual/forecast roles as explicit source semantics.
+
+The source record is attached to the result and can be inspected without
+another request:
+
+```{r first-provenance}
+provenance <- nz_fiscal_provenance(hfi)
+provenance[c(
+  "family", "release_id", "source_kind", "raw_size_bytes", "raw_sha256",
+  "parser_version", "schema_version", "revision_policy"
+)]
+```
+
+## Select a canonical series
+
+The series catalogue creates a SHA-256 identity from structural fields such as
+the accounting basis, consolidation scope, unit, fiscal regime, and
+actual/forecast status. Point-level annotations remain on the observations.
+This makes a change in accounting regime visible instead of accidentally
+joining unlike values under the same display name.
+
+```{r series-history}
+hfi_catalogue <- nz_fiscal_series_catalogue(hfi)
+hfi_catalogue[c(
+  "series_id", "series", "unit", "start_date", "end_date",
+  "observations", "contract_version"
+)]
+
+selected_id <- hfi_catalogue$series_id[[1L]]
+hfi_history <- nz_fiscal_series_history(hfi, selected_id)
+
+stopifnot(
+  inherits(hfi_history, "nz_fiscal_data"),
+  all(hfi_history$period_end == sort(hfi_history$period_end)),
+  all(hfi_history$value == as.numeric(hfi_history$value))
+)
+hfi_history[c("period_end", "series", "value", "regime_id")]
+```
+
+For HFI, two rows with the same human-readable `series` can therefore be
+different canonical series when their structural regime fields differ. Use
+the `series_id` returned by `nz_fiscal_series_catalogue()` rather than
+reconstructing an identity from display text.
+
+## Read the other supported surfaces
+
+The same offline pattern applies to the other families. These examples use
+the installed fixtures and make the surface choice explicit.
+
+```{r other-readers}
+tax <- read_nz_tax_outturn(
+  release_id = "tax-outturn-2026-05",
+  file = fixture_path("tax.csv"),
+  measure = "both",
+  cache_dir = cache
+)
+
+monthly <- read_nz_monthly_financials(
+  release_id = "monthly-financials-2026-02",
+  file = fixture_path("monthly.csv"),
+  table = "performance",
+  cache_dir = cache
+)
+
+efu <- read_nz_efu(
+  release_id = "befu-2026",
+  file = fixture_path("efu.csv"),
+  dataset = "fiscal",
+  cache_dir = cache
+)
+
+stopifnot(
+  identical(names(tax), c(
+    "date", "fiscal_year", "measure", "accounting_basis",
+    "consolidation_scope", "section", "series", "value", "unit",
+    "writeoff_regime"
+  )),
+  identical(names(monthly), c(
+    "table", "statement_sheet", "period_end", "fiscal_year", "period_kind",
+    "observation", "actual_forecast", "consolidation_scope",
+    "accounting_basis", "section", "series", "note", "value", "unit"
+  )),
+  identical(names(efu), c(
+    "release_type", "forecast_vintage", "forecast_horizon", "dataset",
+    "sheet", "year", "period_end", "fiscal_year_basis", "actual_forecast",
+    "source_status_label", "accounting_basis", "consolidation_scope", "section",
+    "series", "value", "unit", "unit_multiplier", "unit_context"
+  )),
+  inherits(tax$date, "Date"),
+  inherits(monthly$period_end, "Date"),
+  inherits(efu$period_end, "Date"),
+  all(c("revenue", "receipts") %in% unique(tax$measure)),
+  all(efu$release_type == "BEFU")
+)
+
+data.frame(
+  family = c("tax outturn", "monthly financials", "EFU"),
+  rows = c(nrow(tax), nrow(monthly), nrow(efu)),
+  date_column = c("date", "period_end", "period_end")
+)
+```
+
+The exact family schemas are documented on the four reader reference pages.
+In compact form, the shared contract is:
+
+| Reader | Date field | Required interpretation fields |
+|---|---|---|
+| `read_nz_hfi()` | `period_end` | `measure`, `unit`, `regime_id`, accounting/GST/consolidation fields |
+| `read_nz_tax_outturn()` | `date` | `measure`, `accounting_basis`, `consolidation_scope`, `writeoff_regime` |
+| `read_nz_monthly_financials()` | `period_end` | `table`, `period_kind`, `observation`, `actual_forecast`, `unit` |
+| `read_nz_efu()` | `period_end` | release type/vintage, dataset, actual/forecast, source status, unit multiplier |
+
+## Scope and limitations
+
+The package focuses on the six reviewed release identities and their mapped
+workbook surfaces. It preserves fiscal-year, accounting, consolidation,
+write-off, unit, and forecast distinctions so users can make those analytical
+choices explicitly. New releases or changed workbook layouts require a
+catalogue/parser update, and downstream tools remain the appropriate place for
+seasonal adjustment, forecasting, imputation, or alternative accounting
+interpretations.
+
+## From an official release
+
+The default `file = NULL` route resolves the selected catalogue release over
+HTTPS. It requires an explicit `accept_terms = TRUE` after reviewing
+`nz_fiscal_terms()`; downloaded bytes are size- and signature-checked and must
+match the catalogue SHA-256 before parsing. The conditional block below is
+intentionally skipped during ordinary vignette builds. Set
+`READFISCALNZ_LIVE=true` only in an environment where live retrieval is
+desired and the source terms have been reviewed.
+
+```{r live-equivalent}
+if (identical(Sys.getenv("READFISCALNZ_LIVE"), "true")) {
+  live_hfi <- read_nz_hfi(
+    release_id = "hfi-1972-2025",
+    accept_terms = TRUE,
+    cache_dir = tempfile("readfiscalnz-live-cache-"),
+    timeout_sec = 30
+  )
+  print(live_hfi)
+}
+```
+
+`accept_terms = TRUE` gates a live download after the caller's review; it is
+not persisted as a provenance field or treated as a credential or licence
+grant. For offline and reproducible work, retain the source file, its SHA-256,
+the release identifier, and the attached provenance together. The `Sources,
+provenance, and caching` vignette covers those choices in detail.
+
+```{r cleanup, include=FALSE}
+unlink(cache, recursive = TRUE)
+```

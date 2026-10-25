@@ -1,0 +1,8 @@
+.DS_Store
+.RData
+.Rhistory
+.Rproj.user/
+.Ruserdata
+*.Rcheck/
+readfiscalnz_*.tar.gz
+docs/
