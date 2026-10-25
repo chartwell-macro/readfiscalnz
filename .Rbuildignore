@@ -1,0 +1,5 @@
+^\.git$
+^\.gitignore$
+^\.Rcheck$
+^readfiscalnz[.]Rcheck$
+^readfiscalnz_.*[.]tar[.]gz$
